@@ -35,5 +35,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add state/seen_ids.json
-          git diff --quiet --cached || git commit -m "Update seen article state [skip ci]"
-          git push
+          # 変更がなければ何もしない
+          if git diff --quiet --cached; then
+            echo "state に変更なし。コミット/プッシュをスキップします。"
+            exit 0
+          fi
+          git commit -m "Update seen article state [skip ci]"
+          # 実行の競合でリモートが先に進んでいることがあるため、
+          # rebase してからプッシュ。失敗したらリトライする。
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && exit 0
+            echo "プッシュ失敗 ($i回目)。リトライします..."
+            sleep 5
+          done
+          echo "5回リトライしてもプッシュできませんでした。" >&2
+          exit 1
