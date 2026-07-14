@@ -1,0 +1,39 @@
+name: Onamae.com RSS to Slack
+
+on:
+  schedule:
+    # 15分おきに実行（UTC基準。頻度は好みに応じて変更可）
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}  # 手動実行もできるようにしておく
+
+# stateファイルをコミットするため書き込み権限を付与
+permissions:
+  contents: write
+
+jobs:
+  check-and-notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Pythonをセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: RSSをチェックしてSlackに通知
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python scripts/notify_slack.py
+
+      - name: 既読状態(state)をコミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/seen_ids.json
+          git diff --quiet --cached || git commit -m "Update seen article state [skip ci]"
+          git push
