@@ -3,7 +3,8 @@
 お名前.com の「メンテナンス」「障害」RSSフィードを取得し、
 未通知の新着記事があれば、本文を英語に翻訳したうえで全文をSlackに通知するスクリプト。
 
-翻訳には Claude API (Anthropic) を使用する（環境変数 ANTHROPIC_API_KEY が必要）。
+翻訳は無料の Google 翻訳エンドポイント（deep-translator 経由）を使用する。
+APIキーは不要・費用もかからない。
 既通知の記事IDは state/seen_ids.json に保存し、重複通知を防ぐ。
 
 信頼性のための工夫:
@@ -22,9 +23,9 @@ import sys
 import time
 from pathlib import Path
 
-import anthropic
 import feedparser
 import requests
+from deep_translator import GoogleTranslator
 
 FEEDS = {
     "メンテナンス": "https://www.onamae.com/news/rss.xml?c=maintenance&g=domain",
@@ -40,10 +41,8 @@ CATEGORY_EN = {
 # 緊急度が高そうなキーワードには絵文字を付ける（原文タイトルで判定）
 URGENT_KEYWORDS = ["緊急"]
 
-# 翻訳に使う Claude モデル。コストを抑えたい場合は "claude-haiku-4-5" に変更可。
-TRANSLATE_MODEL = "claude-opus-4-8"
-TRANSLATE_MAX_TOKENS = 4000
-MAX_BODY_CHARS = 6000  # 翻訳にかける本文の最大文字数（トークン浪費を防ぐ）
+# Google翻訳の無料エンドポイントは1回あたり約5000文字が上限。安全側に分割する。
+TRANSLATE_CHUNK_LIMIT = 4500
 
 # Slackのtextフィールド上限（40,000字）に対する安全マージン
 SLACK_TEXT_LIMIT = 3800
@@ -56,17 +55,6 @@ STATE_DIR = Path(__file__).resolve().parent.parent / "state"
 STATE_FILE = STATE_DIR / "seen_ids.json"
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
-
-# 翻訳結果の構造化出力スキーマ
-TRANSLATION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string"},
-        "body": {"type": "string"},
-    },
-    "required": ["title", "body"],
-    "additionalProperties": False,
-}
 
 
 def load_seen() -> set:
@@ -98,35 +86,42 @@ def extract_body(entry) -> str:
     return text.strip()
 
 
-def translate_to_english(category: str, title: str, body: str) -> dict:
+def _chunk_text(text: str, limit: int = TRANSLATE_CHUNK_LIMIT) -> list:
+    """翻訳エンドポイントの文字数上限に収まるよう、なるべく行単位で分割する。"""
+    chunks = []
+    current = ""
+    for line in text.splitlines(keepends=True):
+        # 1行が上限を超える場合はハード分割
+        while len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if len(current) + len(line) > limit and current:
+            chunks.append(current)
+            current = ""
+        current += line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def translate_to_english(title: str, body: str) -> dict:
     """日本語のタイトル・本文を英語に翻訳して {"title", "body"} を返す。
-    失敗時は RuntimeError を送出する。"""
-    client = anthropic.Anthropic()  # ANTHROPIC_API_KEY を環境変数から読む
-    body_for_translation = body[:MAX_BODY_CHARS]
-    source = (
-        f"Category: {category}\n"
-        f"Title: {title}\n\n"
-        f"Body:\n{body_for_translation if body_for_translation else '(no body text)'}"
-    )
-    system = (
-        "You are a professional translator for a web-hosting/domain-registrar company. "
-        "Translate the given Japanese maintenance/incident announcement into natural, "
-        "professional English. Preserve all dates, times, time zones, domain names, "
-        "hostnames, URLs, IP addresses, and technical terms exactly as written. "
-        "Do not add commentary. Return the translated title and the translated body."
-    )
-    resp = client.messages.create(
-        model=TRANSLATE_MODEL,
-        max_tokens=TRANSLATE_MAX_TOKENS,
-        system=system,
-        messages=[{"role": "user", "content": source}],
-        output_config={"format": {"type": "json_schema", "schema": TRANSLATION_SCHEMA}},
-    )
-    text = next((b.text for b in resp.content if b.type == "text"), None)
-    if not text:
-        raise RuntimeError("翻訳レスポンスにテキストが含まれていません")
-    data = json.loads(text)
-    return {"title": data["title"].strip(), "body": data["body"].strip()}
+    失敗時は例外を送出する。"""
+    translator = GoogleTranslator(source="ja", target="en")
+
+    en_title = title
+    if title.strip():
+        en_title = translator.translate(title) or title
+
+    en_body = ""
+    if body.strip():
+        parts = [translator.translate(c) or "" for c in _chunk_text(body)]
+        en_body = "".join(parts)
+
+    return {"title": en_title.strip(), "body": en_body.strip()}
 
 
 def build_message(category: str, original_title: str, en_title: str, en_body: str, link: str) -> dict:
@@ -210,7 +205,7 @@ def main() -> int:
 
             # 本文を英語に翻訳。失敗したら原文のまま通知して取りこぼしを防ぐ。
             try:
-                translated = translate_to_english(category, title, body)
+                translated = translate_to_english(title, body)
                 en_title, en_body = translated["title"], translated["body"]
             except Exception as e:
                 print(f"[WARN] 翻訳に失敗したため原文で通知します: [{category}] {title}: {e}", file=sys.stderr)
