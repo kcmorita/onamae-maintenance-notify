@@ -65,3 +65,7 @@ git push -u origin main
 
 - GitHub Actionsのscheduleは負荷状況により数分遅延することがあります（Slack側への通知が15分より少し遅れる場合があります）
 - `state/seen_ids.json` はワークフロー実行時に自動でコミットされます。手動で編集する必要はありません
+- お名前.comのRSSはタイトルとリンクしか持たないため、本文は記事ページ（link先）を
+  スクレイピングして取得しています（`fetch_article_body()`）。お名前.com側のHTML構造が
+  変わると本文が取れなくなる可能性がありますが、その場合も**タイトル+リンクは通知**されます。
+  本文セレクタは `.boxNews`（= `.js-news-body`）です

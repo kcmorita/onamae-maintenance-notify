@@ -3,8 +3,9 @@
 お名前.com の「メンテナンス」「障害」RSSフィードを取得し、
 未通知の新着記事があれば、本文を英語に翻訳したうえで全文をSlackに通知するスクリプト。
 
-翻訳は無料の Google 翻訳エンドポイント（deep-translator 経由）を使用する。
-APIキーは不要・費用もかからない。
+お名前.comのRSSはタイトルとリンクしか持たないため、本文は記事ページ(link先)を
+スクレイピングして取得する。翻訳は無料の Google 翻訳エンドポイント（deep-translator 経由）
+を使用する。APIキーは不要・費用もかからない。
 既通知の記事IDは state/seen_ids.json に保存し、重複通知を防ぐ。
 
 信頼性のための工夫:
@@ -25,7 +26,12 @@ from pathlib import Path
 
 import feedparser
 import requests
+from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
+
+# 記事ページ取得時のUser-Agent
+USER_AGENT = "Mozilla/5.0 (compatible; onamae-rss-slack/1.0)"
+ARTICLE_TIMEOUT = 15  # 記事ページ取得のタイムアウト（秒）
 
 FEEDS = {
     "メンテナンス": "https://www.onamae.com/news/rss.xml?c=maintenance&g=domain",
@@ -70,20 +76,53 @@ def save_seen(seen: set) -> None:
         json.dump(sorted(seen), f, ensure_ascii=False, indent=2)
 
 
-def extract_body(entry) -> str:
-    """RSSエントリから本文テキストを取り出し、HTMLタグを除去して返す。"""
+def _clean_text(text: str) -> str:
+    """余分な空白・空行を整理する。"""
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+    return text.strip()
+
+
+def extract_rss_body(entry) -> str:
+    """RSSエントリ内に本文があれば取り出す（お名前.comのRSSは通常空）。"""
     raw = ""
     if entry.get("content"):
         raw = entry["content"][0].get("value", "") or ""
     if not raw:
         raw = entry.get("summary", "") or entry.get("description", "") or ""
-    # HTMLタグを除去し、エンティティをデコード
-    text = re.sub(r"<[^>]+>", " ", raw)
-    text = html.unescape(text)
-    # 余分な空白を整理
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-    return text.strip()
+    if not raw:
+        return ""
+    text = html.unescape(re.sub(r"<[^>]+>", " ", raw))
+    return _clean_text(text)
+
+
+def fetch_article_body(url: str) -> str:
+    """記事ページ本体をスクレイピングして本文テキストを返す。
+    お名前.comの記事本文は div.boxNews（= .js-news-body）に入っている。
+    取得や解析に失敗した場合は空文字を返す（通知はタイトル+リンクで継続）。"""
+    resp = requests.get(url, timeout=ARTICLE_TIMEOUT, headers={"User-Agent": USER_AGENT})
+    resp.raise_for_status()
+    resp.encoding = resp.apparent_encoding
+    soup = BeautifulSoup(resp.text, "html.parser")
+    container = soup.select_one(".boxNews") or soup.select_one(".js-news-body")
+    if not container:
+        return ""
+    # タイトル見出しは別途通知するので本文からは除去
+    for heading in container.select(".boxNews_title"):
+        heading.decompose()
+    return _clean_text(container.get_text("\n", strip=True))
+
+
+def get_body(entry, link: str) -> str:
+    """本文を取得する。RSSに本文があればそれを、無ければ記事ページから取得する。"""
+    body = extract_rss_body(entry)
+    if body:
+        return body
+    try:
+        return fetch_article_body(link)
+    except Exception as e:  # ネットワーク/HTML構造変更など
+        print(f"[WARN] 記事本文の取得に失敗しました: {link}: {e}", file=sys.stderr)
+        return ""
 
 
 def _chunk_text(text: str, limit: int = TRANSLATE_CHUNK_LIMIT) -> list:
@@ -201,7 +240,7 @@ def main() -> int:
                 continue
 
             title = entry.get("title", "(タイトルなし)")
-            body = extract_body(entry)
+            body = get_body(entry, article_id)
 
             # 本文を英語に翻訳。失敗したら原文のまま通知して取りこぼしを防ぐ。
             try:
