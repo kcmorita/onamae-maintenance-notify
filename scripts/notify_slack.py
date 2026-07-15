@@ -173,7 +173,8 @@ def build_message(category: str, original_title: str, en_title: str, en_body: st
     if len(body) > SLACK_TEXT_LIMIT:
         body = body[:SLACK_TEXT_LIMIT].rstrip() + "\n…(truncated)"
 
-    parts = [f"{prefix} *[{category_en}]* {en_title}"]
+    # <!channel> でチャンネル全員に通知する（@channel のSlack特殊記法）
+    parts = [f"<!channel>\n{prefix} *[{category_en}]* {en_title}"]
     if body:
         parts.append(body)
     parts.append(link)
@@ -273,7 +274,7 @@ def main() -> int:
 
     # RSS取得エラーがあればSlackにも警告して気づけるようにする
     if errors:
-        warn_text = "🛑 *[RSS monitor] Failed to fetch feeds*\n" + "\n".join(
+        warn_text = "<!channel>\n🛑 *[RSS monitor] Failed to fetch feeds*\n" + "\n".join(
             f"• {e}" for e in errors
         )
         try:
