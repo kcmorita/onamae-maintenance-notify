@@ -1,7 +1,8 @@
-# お名前.com メンテナンス/障害RSS → Slack通知
+# お名前.com メンテナンス/障害RSS → Slack通知（英語翻訳付き）
 
 お名前.comの「メンテナンス」「障害」RSSフィードを15分おきにチェックし、
-新着記事があればSlackに自動通知するGitHub Actionsワークフローです。
+新着記事があれば **本文を英語に翻訳したうえで全文を** Slackに自動通知するGitHub Actionsワークフローです。
+翻訳には Claude API (Anthropic) を使用します。
 
 ## 構成
 
@@ -35,11 +36,17 @@ git remote add origin <あなたのリポジトリURL>
 git push -u origin main
 ```
 
-### 3. Webhook URLをGitHub Secretsに登録
-1. リポジトリの「Settings」→「Secrets and variables」→「Actions」
-2. 「New repository secret」をクリック
-3. Name: `SLACK_WEBHOOK_URL`
-4. Secret: 手順1で発行したWebhook URLを貼り付け
+### 3. GitHub Secretsを登録
+リポジトリの「Settings」→「Secrets and variables」→「Actions」→「New repository secret」で
+**2つ** のシークレットを登録します。
+
+| Name | Secret |
+|------|--------|
+| `SLACK_WEBHOOK_URL` | 手順1で発行したWebhook URL |
+| `ANTHROPIC_API_KEY` | Claude APIのキー（https://console.anthropic.com で発行） |
+
+`ANTHROPIC_API_KEY` は本文を英語に翻訳するために使います。未設定でも通知自体は動きますが、
+その場合は翻訳に失敗し「原文（日本語）のまま」通知されます。
 
 ### 4. 動作確認
 - 「Actions」タブ →「Onamae.com RSS to Slack」→「Run workflow」で手動実行できます
@@ -54,6 +61,9 @@ git push -u origin main
 - **通知メッセージの見た目を変える**: `scripts/notify_slack.py` の `build_message()` を編集
   （Slackのblock kit形式にしてリッチな見た目にすることも可能）
 - **緊急メンテナンスだけ強調したい**: `URGENT_KEYWORDS` に判定したい単語を追加
+- **翻訳のコストを抑えたい**: `scripts/notify_slack.py` の `TRANSLATE_MODEL` を
+  `claude-haiku-4-5` に変更（安価・高速。翻訳品質は少し下がります）
+- **翻訳をやめたい/別言語にしたい**: `translate_to_english()` の `system` プロンプトを編集
 
 ## 注意点
 

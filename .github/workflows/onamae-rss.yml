@@ -28,9 +28,12 @@ jobs:
       - name: RSSをチェックしてSlackに通知
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/notify_slack.py
 
       - name: 既読状態(state)をコミット
+        # 通知ステップが途中で失敗しても、成功済みの既読を確実に保存する
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
