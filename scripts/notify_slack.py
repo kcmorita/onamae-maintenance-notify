@@ -146,6 +146,16 @@ def _chunk_text(text: str, limit: int = TRANSLATE_CHUNK_LIMIT) -> list:
     return chunks
 
 
+def _preprocess_ja(text: str) -> str:
+    """翻訳前の固有名詞の置換。「お名前.com」は Onamae.com に固定する。"""
+    return text.replace("お名前.com", "Onamae.com").replace("お名前ドットコム", "Onamae.com")
+
+
+def _postprocess_en(text: str) -> str:
+    """訳文で「Name.com」等になってしまった場合の保険的な補正。"""
+    return re.sub(r"\bName\.com\b", "Onamae.com", text)
+
+
 def translate_to_english(title: str, body: str) -> dict:
     """日本語のタイトル・本文を英語に翻訳して {"title", "body"} を返す。
     失敗時は例外を送出する。"""
@@ -153,12 +163,14 @@ def translate_to_english(title: str, body: str) -> dict:
 
     en_title = title
     if title.strip():
-        en_title = translator.translate(title) or title
+        src = _preprocess_ja(title)
+        en_title = _postprocess_en(translator.translate(src) or src)
 
     en_body = ""
     if body.strip():
-        parts = [translator.translate(c) or "" for c in _chunk_text(body)]
-        en_body = "".join(parts)
+        src = _preprocess_ja(body)
+        parts = [translator.translate(c) or "" for c in _chunk_text(src)]
+        en_body = _postprocess_en("".join(parts))
 
     return {"title": en_title.strip(), "body": en_body.strip()}
 
