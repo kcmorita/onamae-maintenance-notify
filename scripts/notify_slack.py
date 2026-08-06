@@ -57,6 +57,11 @@ SLACK_TEXT_LIMIT = 3800
 SLACK_TIMEOUT = 15          # 1回あたりのタイムアウト（秒）
 SLACK_MAX_ATTEMPTS = 4      # 最大試行回数（1回目 + リトライ3回）
 
+# 翻訳のリトライ設定（Google翻訳の無料エンドポイントは共有IPから
+# 一時的に叩き落されることがあるため、短時間バックオフで再試行する）
+TRANSLATE_MAX_ATTEMPTS = 3          # 最大試行回数（1回目 + リトライ2回）
+TRANSLATE_BACKOFF_BASE = 5          # 失敗後の待機秒。試行間で 5秒 → 10秒
+
 STATE_DIR = Path(__file__).resolve().parent.parent / "state"
 STATE_FILE = STATE_DIR / "seen_ids.json"
 
@@ -156,6 +161,30 @@ def _postprocess_en(text: str) -> str:
     return re.sub(r"\bName\.com\b", "Onamae.com", text)
 
 
+def _translate_with_retry(translator: GoogleTranslator, text: str) -> str:
+    """翻訳を最大 TRANSLATE_MAX_ATTEMPTS 回試みる。
+    例外だけでなく None/空応答も失敗として扱い、指数バックオフで再試行する。
+    全試行が失敗したら例外を送出する（呼び出し側で原文フォールバック）。"""
+    last_err = ""
+    for attempt in range(1, TRANSLATE_MAX_ATTEMPTS + 1):
+        try:
+            result = translator.translate(text)
+            if result:
+                return result
+            last_err = "翻訳結果が空でした"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+        print(
+            f"[WARN] 翻訳に失敗 ({attempt}/{TRANSLATE_MAX_ATTEMPTS}): {last_err}",
+            file=sys.stderr,
+        )
+        if attempt < TRANSLATE_MAX_ATTEMPTS:
+            time.sleep(TRANSLATE_BACKOFF_BASE * (2 ** (attempt - 1)))
+    raise RuntimeError(
+        f"翻訳に{TRANSLATE_MAX_ATTEMPTS}回失敗しました: {last_err}"
+    )
+
+
 def translate_to_english(title: str, body: str) -> dict:
     """日本語のタイトル・本文を英語に翻訳して {"title", "body"} を返す。
     失敗時は例外を送出する。"""
@@ -164,12 +193,12 @@ def translate_to_english(title: str, body: str) -> dict:
     en_title = title
     if title.strip():
         src = _preprocess_ja(title)
-        en_title = _postprocess_en(translator.translate(src) or src)
+        en_title = _postprocess_en(_translate_with_retry(translator, src))
 
     en_body = ""
     if body.strip():
         src = _preprocess_ja(body)
-        parts = [translator.translate(c) or "" for c in _chunk_text(src)]
+        parts = [_translate_with_retry(translator, c) for c in _chunk_text(src)]
         en_body = _postprocess_en("".join(parts))
 
     return {"title": en_title.strip(), "body": en_body.strip()}
