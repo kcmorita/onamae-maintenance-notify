@@ -195,7 +195,7 @@ def translate_to_english(title: str, body: str) -> dict:
     if not DEEPL_API_KEY:
         raise RuntimeError("環境変数 DEEPL_API_KEY が設定されていません")
     translator = DeeplTranslator(
-        api_key=DEEPL_API_KEY, source="ja", target="en-us", use_free_api=True
+        api_key=DEEPL_API_KEY, source="ja", target="en", use_free_api=True
     )
 
     en_title = title

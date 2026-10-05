@@ -59,8 +59,8 @@ git push -u origin main
 - **通知メッセージの見た目を変える**: `scripts/notify_slack.py` の `build_message()` を編集
   （Slackのblock kit形式にしてリッチな見た目にすることも可能）
 - **緊急メンテナンスだけ強調したい**: `URGENT_KEYWORDS` に判定したい単語を追加
-- **翻訳先の言語を変えたい**: `scripts/notify_slack.py` の `DeeplTranslator(... target="en-us")`
-  の `target` を変更（DeepL対応コード: `en-gb`, `zh`, `ko` など。[DeepLドキュメント](https://developers.deepl.com/docs/getting-started/supported-languages)参照）
+- **翻訳先の言語を変えたい**: `scripts/notify_slack.py` の `DeeplTranslator(... target="en")`
+  の `target` を変更（deep-translator が受け付けるDeepLコード: `de`, `fr`, `zh`, `ko` など。regional variant の `en-us`/`en-gb` は deep-translator 側で未サポートなので、プレーンな言語コードのみ指定可）
 - **翻訳をやめたい**: `translate_to_english()` を呼ばず原文をそのまま渡すよう `main()` を編集
 
 ## 注意点
