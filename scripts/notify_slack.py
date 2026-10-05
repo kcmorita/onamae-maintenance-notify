@@ -4,8 +4,9 @@
 未通知の新着記事があれば、本文を英語に翻訳したうえで全文をSlackに通知するスクリプト。
 
 お名前.comのRSSはタイトルとリンクしか持たないため、本文は記事ページ(link先)を
-スクレイピングして取得する。翻訳は無料の Google 翻訳エンドポイント（deep-translator 経由）
-を使用する。APIキーは不要・費用もかからない。
+スクレイピングして取得する。翻訳は DeepL API Free（deep-translator 経由）を使用する。
+DEEPL_API_KEY が必要（登録日基準で月次 500,000 文字のクォータ）。一時的な 429/5xx は
+リトライで吸収する。クォータ枯渇など全失敗した場合は原文(日本語)のまま通知する。
 既通知の記事IDは state/seen_ids.json に保存し、重複通知を防ぐ。
 
 信頼性のための工夫:
@@ -27,7 +28,7 @@ from pathlib import Path
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from deep_translator import GoogleTranslator
+from deep_translator import DeeplTranslator
 
 # 記事ページ取得時のUser-Agent
 USER_AGENT = "Mozilla/5.0 (compatible; onamae-rss-slack/1.0)"
@@ -47,7 +48,9 @@ CATEGORY_EN = {
 # 緊急度が高そうなキーワードには絵文字を付ける（原文タイトルで判定）
 URGENT_KEYWORDS = ["緊急"]
 
-# Google翻訳の無料エンドポイントは1回あたり約5000文字が上限。安全側に分割する。
+# DeepL API のリクエストボディ上限は実質 128 KiB だが、
+# deep-translator 経由では文字列ごとに素直に送信するため、安全マージンとして
+# 4,500 文字ごとに分割する。通常のお知らせ本文は1回で収まるサイズ。
 TRANSLATE_CHUNK_LIMIT = 4500
 
 # Slackのtextフィールド上限（40,000字）に対する安全マージン
@@ -57,8 +60,8 @@ SLACK_TEXT_LIMIT = 3800
 SLACK_TIMEOUT = 15          # 1回あたりのタイムアウト（秒）
 SLACK_MAX_ATTEMPTS = 4      # 最大試行回数（1回目 + リトライ3回）
 
-# 翻訳のリトライ設定（Google翻訳の無料エンドポイントは共有IPから
-# 一時的に叩き落されることがあるため、短時間バックオフで再試行する）
+# 翻訳のリトライ設定（DeepL API Free 側の一時的な 429/5xx を吸収するため、
+# 短時間バックオフで再試行する）
 TRANSLATE_MAX_ATTEMPTS = 3          # 最大試行回数（1回目 + リトライ2回）
 TRANSLATE_BACKOFF_BASE = 5          # 失敗後の待機秒。試行間で 5秒 → 10秒
 
@@ -66,6 +69,7 @@ STATE_DIR = Path(__file__).resolve().parent.parent / "state"
 STATE_FILE = STATE_DIR / "seen_ids.json"
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
+DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY")
 
 
 def load_seen() -> set:
@@ -161,7 +165,7 @@ def _postprocess_en(text: str) -> str:
     return re.sub(r"\bName\.com\b", "Onamae.com", text)
 
 
-def _translate_with_retry(translator: GoogleTranslator, text: str) -> str:
+def _translate_with_retry(translator: DeeplTranslator, text: str) -> str:
     """翻訳を最大 TRANSLATE_MAX_ATTEMPTS 回試みる。
     例外だけでなく None/空応答も失敗として扱い、指数バックオフで再試行する。
     全試行が失敗したら例外を送出する（呼び出し側で原文フォールバック）。"""
@@ -188,7 +192,11 @@ def _translate_with_retry(translator: GoogleTranslator, text: str) -> str:
 def translate_to_english(title: str, body: str) -> dict:
     """日本語のタイトル・本文を英語に翻訳して {"title", "body"} を返す。
     失敗時は例外を送出する。"""
-    translator = GoogleTranslator(source="ja", target="en")
+    if not DEEPL_API_KEY:
+        raise RuntimeError("環境変数 DEEPL_API_KEY が設定されていません")
+    translator = DeeplTranslator(
+        api_key=DEEPL_API_KEY, source="ja", target="en-us", use_free_api=True
+    )
 
     en_title = title
     if title.strip():

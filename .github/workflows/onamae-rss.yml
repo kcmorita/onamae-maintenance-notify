@@ -28,6 +28,7 @@ jobs:
       - name: RSSをチェックしてSlackに通知
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: python scripts/notify_slack.py
 
       - name: 既読状態(state)をコミット
