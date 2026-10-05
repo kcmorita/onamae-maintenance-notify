@@ -25,6 +25,33 @@ jobs:
       - name: 依存パッケージをインストール
         run: pip install -r requirements.txt
 
+      - name: '[DEBUG] DeepLキーの構造と認証チェック（鍵は漏らさない・終わったら削除）'
+        env:
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+        run: |
+          echo "length=${#DEEPL_API_KEY}"
+          case "$DEEPL_API_KEY" in
+            *:fx) echo "endswith_fx=yes" ;;
+            *)    echo "endswith_fx=no" ;;
+          esac
+          case "$DEEPL_API_KEY" in
+            *[[:space:]]*) echo "has_whitespace=yes" ;;
+            *)             echo "has_whitespace=no" ;;
+          esac
+          echo "hyphens=$(printf '%s' "$DEEPL_API_KEY" | tr -cd '-' | wc -c)"
+          echo "--- DeepL Free endpoint (api-free.deepl.com) ---"
+          free_http=$(curl -s -o /tmp/free.json -w '%{http_code}' \
+            -H "Authorization: DeepL-Auth-Key $DEEPL_API_KEY" \
+            https://api-free.deepl.com/v2/usage)
+          echo "http=$free_http"
+          echo "body=$(head -c 300 /tmp/free.json)"
+          echo "--- DeepL Pro endpoint (api.deepl.com) ---"
+          pro_http=$(curl -s -o /tmp/pro.json -w '%{http_code}' \
+            -H "Authorization: DeepL-Auth-Key $DEEPL_API_KEY" \
+            https://api.deepl.com/v2/usage)
+          echo "http=$pro_http"
+          echo "body=$(head -c 300 /tmp/pro.json)"
+
       - name: RSSをチェックしてSlackに通知
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
