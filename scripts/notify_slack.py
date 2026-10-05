@@ -4,8 +4,8 @@
 未通知の新着記事があれば、本文を英語に翻訳したうえで全文をSlackに通知するスクリプト。
 
 お名前.comのRSSはタイトルとリンクしか持たないため、本文は記事ページ(link先)を
-スクレイピングして取得する。翻訳は DeepL API Free（deep-translator 経由）を使用する。
-DEEPL_API_KEY が必要（登録日基準で月次 500,000 文字のクォータ）。一時的な 429/5xx は
+スクレイピングして取得する。翻訳は DeepL API Free を requests で直接叩く。
+DEEPL_API_KEY（末尾 :fx の Free キー）が必要。一時的な 429/5xx は
 リトライで吸収する。クォータ枯渇など全失敗した場合は原文(日本語)のまま通知する。
 既通知の記事IDは state/seen_ids.json に保存し、重複通知を防ぐ。
 
@@ -28,7 +28,6 @@ from pathlib import Path
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from deep_translator import DeeplTranslator
 
 # 記事ページ取得時のUser-Agent
 USER_AGENT = "Mozilla/5.0 (compatible; onamae-rss-slack/1.0)"
@@ -49,9 +48,13 @@ CATEGORY_EN = {
 URGENT_KEYWORDS = ["緊急"]
 
 # DeepL API のリクエストボディ上限は実質 128 KiB だが、
-# deep-translator 経由では文字列ごとに素直に送信するため、安全マージンとして
+# 文字列ごとに素直に送信するため、安全マージンとして
 # 4,500 文字ごとに分割する。通常のお知らせ本文は1回で収まるサイズ。
 TRANSLATE_CHUNK_LIMIT = 4500
+
+# DeepL API Free のエンドポイント。Freeキー(末尾 :fx)は必ずこちらに叩く。
+DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"
+DEEPL_TIMEOUT = 30
 
 # Slackのtextフィールド上限（40,000字）に対する安全マージン
 SLACK_TEXT_LIMIT = 3800
@@ -165,14 +168,28 @@ def _postprocess_en(text: str) -> str:
     return re.sub(r"\bName\.com\b", "Onamae.com", text)
 
 
-def _translate_with_retry(translator: DeeplTranslator, text: str) -> str:
+def _call_deepl(text: str) -> str:
+    """DeepL API Free を直接叩き、翻訳結果の文字列を返す。
+    認証やHTTPエラーは例外として送出し、_translate_with_retry 側で処理する。"""
+    resp = requests.post(
+        DEEPL_API_URL,
+        headers={"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"},
+        data={"text": text, "source_lang": "JA", "target_lang": "EN-US"},
+        timeout=DEEPL_TIMEOUT,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload["translations"][0]["text"]
+
+
+def _translate_with_retry(text: str) -> str:
     """翻訳を最大 TRANSLATE_MAX_ATTEMPTS 回試みる。
     例外だけでなく None/空応答も失敗として扱い、指数バックオフで再試行する。
     全試行が失敗したら例外を送出する（呼び出し側で原文フォールバック）。"""
     last_err = ""
     for attempt in range(1, TRANSLATE_MAX_ATTEMPTS + 1):
         try:
-            result = translator.translate(text)
+            result = _call_deepl(text)
             if result:
                 return result
             last_err = "翻訳結果が空でした"
@@ -194,19 +211,16 @@ def translate_to_english(title: str, body: str) -> dict:
     失敗時は例外を送出する。"""
     if not DEEPL_API_KEY:
         raise RuntimeError("環境変数 DEEPL_API_KEY が設定されていません")
-    translator = DeeplTranslator(
-        api_key=DEEPL_API_KEY, source="ja", target="en", use_free_api=True
-    )
 
     en_title = title
     if title.strip():
         src = _preprocess_ja(title)
-        en_title = _postprocess_en(_translate_with_retry(translator, src))
+        en_title = _postprocess_en(_translate_with_retry(src))
 
     en_body = ""
     if body.strip():
         src = _preprocess_ja(body)
-        parts = [_translate_with_retry(translator, c) for c in _chunk_text(src)]
+        parts = [_translate_with_retry(c) for c in _chunk_text(src)]
         en_body = _postprocess_en("".join(parts))
 
     return {"title": en_title.strip(), "body": en_body.strip()}
