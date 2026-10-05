@@ -2,7 +2,7 @@
 
 お名前.comの「メンテナンス」「障害」RSSフィードを15分おきにチェックし、
 新着記事があれば **本文を英語に翻訳したうえで全文を** Slackに自動通知するGitHub Actionsワークフローです。
-翻訳は無料のGoogle翻訳エンドポイント（deep-translator経由）を使うため、APIキーや費用は不要です。
+翻訳は DeepL API Free（deep-translator経由）を使います。無料プランは登録日基準で月500,000文字までです。
 
 ## 構成
 
@@ -36,15 +36,17 @@ git remote add origin <あなたのリポジトリURL>
 git push -u origin main
 ```
 
-### 3. Webhook URLをGitHub Secretsに登録
+### 3. DeepL APIキーを取得
+1. https://www.deepl.com/pro-api にアクセスし「DeepL API Free」でアカウント登録（クレジットカード要・無料枠の範囲内では課金なし）
+2. 「アカウント」→「認証キー」から Authentication Key（末尾が `:fx` の文字列）をコピー
+
+### 4. Secrets を GitHub に登録
 1. リポジトリの「Settings」→「Secrets and variables」→「Actions」
-2. 「New repository secret」をクリック
-3. Name: `SLACK_WEBHOOK_URL`
-4. Secret: 手順1で発行したWebhook URLを貼り付け
+2. 「New repository secret」で以下2件を登録:
+   - Name: `SLACK_WEBHOOK_URL` / Secret: 手順1で発行したWebhook URL
+   - Name: `DEEPL_API_KEY` / Secret: 手順3で取得した認証キー
 
-（翻訳は無料のGoogle翻訳を使うため、APIキーの登録は不要です）
-
-### 4. 動作確認
+### 5. 動作確認
 - 「Actions」タブ →「Onamae.com RSS to Slack」→「Run workflow」で手動実行できます
 - 初回実行時は既存記事を「既読」として記録するだけで通知はスキップされます
   （動かした瞬間に過去記事が全部Slackに流れるのを防ぐため）
@@ -57,8 +59,8 @@ git push -u origin main
 - **通知メッセージの見た目を変える**: `scripts/notify_slack.py` の `build_message()` を編集
   （Slackのblock kit形式にしてリッチな見た目にすることも可能）
 - **緊急メンテナンスだけ強調したい**: `URGENT_KEYWORDS` に判定したい単語を追加
-- **翻訳先の言語を変えたい**: `scripts/notify_slack.py` の `GoogleTranslator(source="ja", target="en")`
-  の `target` を変更（例: 中国語 `zh-CN`、韓国語 `ko`）
+- **翻訳先の言語を変えたい**: `scripts/notify_slack.py` の `DeeplTranslator(... target="en-us")`
+  の `target` を変更（DeepL対応コード: `en-gb`, `zh`, `ko` など。[DeepLドキュメント](https://developers.deepl.com/docs/getting-started/supported-languages)参照）
 - **翻訳をやめたい**: `translate_to_english()` を呼ばず原文をそのまま渡すよう `main()` を編集
 
 ## 注意点
